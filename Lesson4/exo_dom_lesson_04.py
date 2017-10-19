@@ -80,6 +80,30 @@ def get_single_result(url):
                          PRIX=tmp_dict.get('PRIX'))
     return output
 
+
+def get_argus_price(url):
+    soup = getSoupFromURL(url)
+    output = None
+    if(soup):
+        output = NUMERIC_PATTERN_TRIM.sub(
+            '', unicodedata.normalize("NFKD",soup.find(class_="jsRefinedQuot").text.strip().lower()))
+    return output
+
+
+def get_results_argus():
+    url_root = "https://www.lacentrale.fr/"
+    url = url_root + "cote-voitures-renault-zoe--2013-.html"
+    output = []
+    soup = getSoupFromURL(url)
+    if(soup):
+        tmp_tag = soup.find(class_="listingResult").find_all(class_="listingResultLine auto")
+        tmp_list = [(tag.find("h3").text.strip().lower(), url_root + tag.find("a").get('href')) for tag in tmp_tag]
+        #a multithreader
+        output = [ArgusVehicle(MODELE=modele, PRIX=get_argus_price(url))
+                  for (modele, url) in tmp_list]
+    return output
+
+
 # nettoyage des valeurs numeriques
 PRICE_PATTERN = re.compile("[0-9]*\ ?[0-9]*\ *€")
 DISTANCE_PATTERN = re.compile("[0-9]*\ ?[0-9]*\ *km")
@@ -89,6 +113,11 @@ NUMERIC_PATTERN_TRIM = re.compile(r'[^\d.,]+')
 Vehicle = namedtuple('Vehicle', ['MARQUE', 'MODELE', 'ANNEE', 'DISTANCE', 'PRIX'])
 Region = namedtuple('Region', ['REGION'])
 RegionVehicle = namedtuple('RegionVehicle', Region._fields + Vehicle._fields)
+ArgusVehicle = namedtuple('ArgusVehicle', ['MODELE', 'PRIX'])
+
+#Argus des zoe
+df_argus_vehicles = pd.DataFrame(get_results_argus(), columns=ArgusVehicle._fields)
+
 
 # liste des regions
 regions = ['aquitaine','ile_de_france','provence_alpes_cote_d_azur']
@@ -96,18 +125,21 @@ regions = ['aquitaine','ile_de_france','provence_alpes_cote_d_azur']
 # Liste des annonces a crawler
 annonces = dict([(region, get_results(region=region, question="zoe")) for region in regions])
 
-#Lancement du multithread sur chaque annonce
+#Lancement du multithread sur chaque annonce (mal gere ...)
 pool = Pool(10)
-vehicles = pool.map(get_single_result, annonces['ile_de_france'])
-vehicles = [RegionVehicle(*(Region(region) + vehicle)) for vehicle in vehicles for region in regions]
+region_vehicles = []
+for region in regions:
+    vehicles = pool.map(get_single_result, annonces[region])
+    region_vehicles += [RegionVehicle(*(Region(region) + vehicle)) for vehicle in vehicles]
 
 #creation du tableau pandas
 vehicles_type = {'REGION':str, 'MARQUE': str, 'MODELE': str,
                  'ANNEE':np.int32, 'DISTANCE':np.float64, 'PRIX':np.float64}
 # df_vehicles = pd.DataFrame(vehicles, dtype=vehicles_type, columns=Vehicle._fields)
-df_vehicles = pd.DataFrame(vehicles, columns=RegionVehicle._fields)
+df_region_vehicles = pd.DataFrame(region_vehicles, columns=RegionVehicle._fields)
 
 for k, v in vehicles_type.items():
-    df_vehicles[k] = df_vehicles[k].astype(v)
+    df_region_vehicles[k] = df_region_vehicles[k].astype(v)
 
-df_vehicles
+print(df_argus_vehicles.head())
+print(df_region_vehicles.head())
