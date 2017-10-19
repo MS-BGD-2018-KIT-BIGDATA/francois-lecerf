@@ -4,10 +4,7 @@ import unicodedata
 from multiprocessing import Pool
 import pandas as pd
 import re
-
-
-PRICE_PATTERN = re.compile("[0-9]*\ ?[0-9]*\ *€")
-DISTANCE_PATTERN = re.compile("[0-9]*\ ?[0-9]*\ *km")
+from collections import namedtuple
 
 
 def getSoupFromURL(url, method='get', data={}):
@@ -33,17 +30,17 @@ def data_cleanup(parameters, value):
         # print(price)
         # print(distance)
         if price:
-            return dict(PRICE=value)
+            return ['PRIX', value]
         elif distance:
-            return dict(DISTANCE=value)
+            return ['DISTANCE', value]
         else:
             return None
     elif (parameters["itemprop"] == "model"):
-        return dict(MODELE=value)
+        return ['MODELE', value]
     elif (parameters["itemprop"] == "brand"):
-        return dict(MARQUE=value)
+        return ['MARQUE', value]
     elif (parameters["itemprop"] == "releaseDate"):
-        return dict(ANNEE=value)
+        return ['ANNEE', value]
     else:
         # print("toto")
         return None
@@ -62,20 +59,32 @@ def get_results(question="zoe"):
 
 
 def get_single_result(url):
-    output = []
+    # outputs NamedTuple
+    output = None
     soup = getSoupFromURL(url)
     if(soup):
         tag_list = soup.findAll("span", class_="value")
         property_tuples = [(tag.attrs, unicodedata.normalize(
                            "NFKD", tag.text.strip().lower())) for tag in tag_list]
-        #output = map(data_cleanup, property_tuples)
-        output = [data_cleanup(parameters, value) for parameters, value in property_tuples]
+        tmp_table = [data_cleanup(parameters, value)
+                     for parameters, value in property_tuples]
+        tmp_dict = dict([row for row in tmp_table if row != None])
+        output = Vehicle(MARQUE=tmp_dict.get('MARQUE'),
+                         MODELE=tmp_dict.get('MODELE'),
+                         ANNEE=tmp_dict.get('ANNEE'),
+                         DISTANCE=tmp_dict.get('DISTANCE'),
+                         PRIX=tmp_dict.get('PRIX'))
     return output
 
 
+PRICE_PATTERN = re.compile("[0-9]*\ ?[0-9]*\ *€")
+DISTANCE_PATTERN = re.compile("[0-9]*\ ?[0-9]*\ *km")
+
+Vehicle = namedtuple(
+    'Vehicle', ['MARQUE', 'MODELE', 'ANNEE', 'DISTANCE', 'PRIX'])
 
 pool = Pool(10)
 
-stats = pool.map(get_single_result, get_results())
+vehicles = pool.map(get_single_result, get_results())
 
-print(stats)
+pd.DataFrame(vehicles, columns=Vehicle._fields)
