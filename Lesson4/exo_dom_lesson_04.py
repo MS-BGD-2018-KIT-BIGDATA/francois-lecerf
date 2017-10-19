@@ -2,6 +2,7 @@ from bs4 import BeautifulSoup
 import requests
 import unicodedata
 from multiprocessing import Pool
+import numpy as np
 import pandas as pd
 import re
 from collections import namedtuple
@@ -30,9 +31,9 @@ def data_cleanup(parameters, value):
         # print(price)
         # print(distance)
         if price:
-            return ['PRIX', value]
+            return ['PRIX', NUMERIC_PATTERN_TRIM.sub('', value)]
         elif distance:
-            return ['DISTANCE', value]
+            return ['DISTANCE', NUMERIC_PATTERN_TRIM.sub('', value)]
         else:
             return None
     elif (parameters["itemprop"] == "model"):
@@ -46,8 +47,11 @@ def data_cleanup(parameters, value):
         return None
 
 
-def get_results(question="zoe"):
-    url = 'https://www.leboncoin.fr/voitures/offres/ile_de_france/occasions/?th=1&q=' + question
+def get_results(region = "ile_de_france",question="zoe"):
+    url = ('https://www.leboncoin.fr/voitures/offres/'
+           + region
+           + '/occasions/?th=1&q='
+           + question)
     output = []
     soup = getSoupFromURL(url)
     if(soup):
@@ -59,7 +63,7 @@ def get_results(question="zoe"):
 
 
 def get_single_result(url):
-    # outputs NamedTuple
+    # outputs Vehicle NamedTuple
     output = None
     soup = getSoupFromURL(url)
     if(soup):
@@ -76,15 +80,34 @@ def get_single_result(url):
                          PRIX=tmp_dict.get('PRIX'))
     return output
 
-
+# nettoyage des valeurs numeriques
 PRICE_PATTERN = re.compile("[0-9]*\ ?[0-9]*\ *€")
 DISTANCE_PATTERN = re.compile("[0-9]*\ ?[0-9]*\ *km")
+NUMERIC_PATTERN_TRIM = re.compile(r'[^\d.,]+')
 
-Vehicle = namedtuple(
-    'Vehicle', ['MARQUE', 'MODELE', 'ANNEE', 'DISTANCE', 'PRIX'])
+# modele de donnees
+Vehicle = namedtuple('Vehicle', ['MARQUE', 'MODELE', 'ANNEE', 'DISTANCE', 'PRIX'])
+Region = namedtuple('Region', ['REGION'])
+RegionVehicle = namedtuple('RegionVehicle', Region._fields + Vehicle._fields)
 
+# liste des regions
+regions = ['aquitaine','ile_de_france','provence_alpes_cote_d_azur']
+
+# Liste des annonces a crawler
+annonces = dict([(region, get_results(region=region, question="zoe")) for region in regions])
+
+#Lancement du multithread sur chaque annonce
 pool = Pool(10)
+vehicles = pool.map(get_single_result, annonces['ile_de_france'])
+vehicles = [RegionVehicle(*(Region(region) + vehicle)) for vehicle in vehicles for region in regions]
 
-vehicles = pool.map(get_single_result, get_results())
+#creation du tableau pandas
+vehicles_type = {'REGION':str, 'MARQUE': str, 'MODELE': str,
+                 'ANNEE':np.int32, 'DISTANCE':np.float64, 'PRIX':np.float64}
+# df_vehicles = pd.DataFrame(vehicles, dtype=vehicles_type, columns=Vehicle._fields)
+df_vehicles = pd.DataFrame(vehicles, columns=RegionVehicle._fields)
 
-pd.DataFrame(vehicles, columns=Vehicle._fields)
+for k, v in vehicles_type.items():
+    df_vehicles[k] = df_vehicles[k].astype(v)
+
+df_vehicles
